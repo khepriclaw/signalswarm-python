@@ -133,63 +133,57 @@ def decide(view: AggregatedView) -> tuple[SignalType, float, str]:
 # ---------------------------------------------------------------------------
 
 async def main() -> None:
-    client = SignalSwarm(api_key=API_KEY, api_url=API_URL)
+    async with SignalSwarm(api_key=API_KEY, api_url=API_URL) as client:
+        # Register aggregator agent
+        try:
+            agent = await client.register_agent(
+                name="SwarmAggregator",
+                description="Meta-signal agent: reputation-weighted consensus",
+                tier=Tier.PRO,
+            )
+            print(f"Agent registered: {agent.name}")
+        except Exception as exc:
+            print(f"Agent registration skipped: {exc}")
 
-    # Register aggregator agent
-    try:
-        agent = await client.register_agent(
-            name="SwarmAggregator",
-            description="Meta-signal agent: reputation-weighted consensus",
-            tier=Tier.PRO,
+        # Fetch live signal feed
+        print(f"\nFetching signal feed for {ASSET}...")
+        feed_items = await client.get_feed(
+            asset=ASSET,
+            active_only=True,
+            min_confidence=MIN_CONFIDENCE,
+            limit=100,
         )
-        print(f"Agent registered: {agent.name}")
-    except Exception as exc:
-        print(f"Agent registration skipped: {exc}")
 
-    # Fetch live signal feed
-    print(f"\nFetching signal feed for {ASSET}...")
-    feed_items = await client.get_feed(
-        asset=ASSET,
-        active_only=True,
-        min_confidence=MIN_CONFIDENCE,
-        limit=100,
-    )
-
-    # Convert FeedItem objects to dicts for the aggregator
-    feed_dicts: list[dict] = []
-    for item in feed_items:
-        if hasattr(item, "model_dump"):
+        # Convert FeedItem objects to dicts for the aggregator
+        feed_dicts: list[dict] = []
+        for item in feed_items:
             feed_dicts.append(item.model_dump())
-        elif isinstance(item, dict):
-            feed_dicts.append(item)
 
-    print(f"  Found {len(feed_dicts)} qualifying signals.")
+        print(f"  Found {len(feed_dicts)} qualifying signals.")
 
-    # Aggregate and decide
-    view = aggregate_signals(feed_dicts, ASSET)
-    print(f"\nAggregation:")
-    print(f"  LONG weight:  {view.long_weight}")
-    print(f"  SHORT weight: {view.short_weight}")
-    print(f"  HOLD weight:  {view.hold_weight}")
+        # Aggregate and decide
+        view = aggregate_signals(feed_dicts, ASSET)
+        print(f"\nAggregation:")
+        print(f"  LONG weight:  {view.long_weight}")
+        print(f"  SHORT weight: {view.short_weight}")
+        print(f"  HOLD weight:  {view.hold_weight}")
 
-    direction, confidence, reasoning = decide(view)
-    print(f"\nDecision:")
-    print(f"  Direction:  {direction.value.upper()}")
-    print(f"  Confidence: {confidence}")
-    print(f"  Reasoning:  {reasoning}")
+        direction, confidence, reasoning = decide(view)
+        print(f"\nDecision:")
+        print(f"  Direction:  {direction.value.upper()}")
+        print(f"  Confidence: {confidence}")
+        print(f"  Reasoning:  {reasoning}")
 
-    # Submit meta-signal
-    signal = await client.submit_signal(
-        asset=ASSET,
-        direction=direction,
-        confidence=confidence,
-        timeframe_hours=TIMEFRAME_HOURS,
-        reasoning=reasoning,
-        stake_amount=STAKE,
-    )
-    print(f"\nMeta-signal #{signal.id} submitted.")
-
-    await client.close()
+        # Submit meta-signal
+        signal = await client.submit_signal(
+            asset=ASSET,
+            direction=direction,
+            confidence=confidence,
+            timeframe_hours=TIMEFRAME_HOURS,
+            reasoning=reasoning,
+            stake_amount=STAKE,
+        )
+        print(f"\nMeta-signal #{signal.id} submitted.")
 
 
 if __name__ == "__main__":

@@ -22,8 +22,8 @@ Usage::
 from __future__ import annotations
 
 import asyncio
-import secrets
-from typing import Any, Optional
+import hashlib
+from typing import Any
 
 import httpx
 
@@ -31,6 +31,7 @@ from signalswarm.auth import APIKeyAuth, WalletAuth, build_auth
 from signalswarm.exceptions import (
     AuthenticationError,
     AgentNotFoundError,
+    InsufficientStakeError,
     InvalidSignalError,
     NetworkError,
     RateLimitError,
@@ -82,7 +83,10 @@ def _raise_for_status(response: httpx.Response) -> None:
     if status == 429:
         retry_after = float(response.headers.get("Retry-After", 0))
         raise RateLimitError(retry_after=retry_after)
-    if status == 400 or status == 422:
+    if status in (400, 422):
+        text = str(detail).lower()
+        if "stake" in text or "insufficient" in text:
+            raise InsufficientStakeError()
         raise InvalidSignalError(str(detail))
     raise SignalSwarmError(f"API error {status}: {detail}", status_code=status)
 
@@ -131,8 +135,12 @@ class SignalSwarm:
 
         # Generate a deterministic agent address from the API key when no
         # wallet is provided.  The backend requires a 0x-prefixed hex address.
+        # Using a hash ensures the same API key always produces the same
+        # address across client instantiations.
         if isinstance(self._auth, APIKeyAuth):
-            self._agent_address = "0x" + secrets.token_hex(20)
+            self._agent_address = "0x" + hashlib.sha256(
+                api_key.encode()
+            ).hexdigest()[:40]
         else:
             self._agent_address = getattr(self._auth, "public_key", "")
 
@@ -183,7 +191,16 @@ class SignalSwarm:
                 # Retry on 429 / 5xx
                 if response.status_code == 429 or response.status_code >= 500:
                     if attempt < self.max_retries:
-                        delay = self.retry_backoff * (2 ** attempt)
+                        if response.status_code == 429:
+                            # Respect the server's Retry-After header when present
+                            retry_after = response.headers.get("Retry-After")
+                            delay = (
+                                float(retry_after)
+                                if retry_after
+                                else self.retry_backoff * (2 ** attempt)
+                            )
+                        else:
+                            delay = self.retry_backoff * (2 ** attempt)
                         await asyncio.sleep(delay)
                         continue
                 _raise_for_status(response)

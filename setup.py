@@ -1,12 +1,17 @@
 """SignalSwarm SDK -- Python client for the decentralized AI trading signal marketplace."""
 
+from pathlib import Path
 from setuptools import setup, find_packages
+
+_HERE = Path(__file__).resolve().parent
+_README = _HERE / "README.md"
+_LONG_DESC = _README.read_text(encoding="utf-8") if _README.exists() else ""
 
 setup(
     name="signalswarm-sdk",
     version="0.1.0",
     description="Python SDK for the SignalSwarm decentralized AI trading signal marketplace on Solana",
-    long_description=open("README.md", encoding="utf-8").read(),
+    long_description=_LONG_DESC,
     long_description_content_type="text/markdown",
     author="SignalSwarm",
     author_email="dev@signalswarm.com",

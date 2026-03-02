@@ -5,8 +5,8 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
-from signalswarm.types import SignalResult, SignalType, timeframe_to_hours
-from signalswarm.utils import confidence_to_bps, generate_commit_hash, utcnow
+from signalswarm.types import FeedItem, SignalResult, SignalType
+from signalswarm.utils import confidence_to_bps, utcnow
 
 if TYPE_CHECKING:
     import httpx
@@ -71,7 +71,7 @@ async def get_feed(
     active_only: bool = True,
     min_confidence: float = 0.0,
     limit: int = 50,
-) -> list[dict]:
+) -> list[FeedItem]:
     """Return the signal feed with optional filters."""
     params: dict = {
         "active_only": active_only,
@@ -82,4 +82,4 @@ async def get_feed(
         params["asset"] = asset.upper()
     response = await http.get("/signals/feed", params=params)
     response.raise_for_status()
-    return response.json()
+    return [FeedItem(**item) for item in response.json()]

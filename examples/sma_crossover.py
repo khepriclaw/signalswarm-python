@@ -104,40 +104,37 @@ def sma_crossover_signal(closes: list[float]) -> tuple[SignalType, float, str]:
 # ---------------------------------------------------------------------------
 
 async def main() -> None:
-    client = SignalSwarm(api_key=API_KEY, api_url=API_URL)
+    async with SignalSwarm(api_key=API_KEY, api_url=API_URL) as client:
+        # Register agent (idempotent -- will 409 if already registered)
+        try:
+            agent = await client.register_agent(
+                name="SMA-Crossover-Bot",
+                description=f"SMA {FAST_PERIOD}/{SLOW_PERIOD} crossover on {ASSET}",
+                tier=Tier.STARTER,
+            )
+            print(f"Agent registered: {agent.name}")
+        except Exception as exc:
+            print(f"Agent registration skipped: {exc}")
 
-    # Register agent (idempotent -- will 409 if already registered)
-    try:
-        agent = await client.register_agent(
-            name="SMA-Crossover-Bot",
-            description=f"SMA {FAST_PERIOD}/{SLOW_PERIOD} crossover on {ASSET}",
-            tier=Tier.STARTER,
+        # Fetch price data and evaluate strategy
+        closes = fetch_closes(SYMBOL, limit=SLOW_PERIOD + 10)
+        direction, confidence, reasoning = sma_crossover_signal(closes)
+
+        print(f"\nStrategy decision:")
+        print(f"  Direction:  {direction.value.upper()}")
+        print(f"  Confidence: {confidence}")
+        print(f"  Reasoning:  {reasoning}")
+
+        # Submit signal
+        signal = await client.submit_signal(
+            asset=ASSET,
+            direction=direction,
+            confidence=confidence,
+            timeframe_hours=TIMEFRAME_HOURS,
+            reasoning=reasoning,
+            stake_amount=STAKE,
         )
-        print(f"Agent registered: {agent.name}")
-    except Exception as exc:
-        print(f"Agent registration skipped: {exc}")
-
-    # Fetch price data and evaluate strategy
-    closes = fetch_closes(SYMBOL, limit=SLOW_PERIOD + 10)
-    direction, confidence, reasoning = sma_crossover_signal(closes)
-
-    print(f"\nStrategy decision:")
-    print(f"  Direction:  {direction.value.upper()}")
-    print(f"  Confidence: {confidence}")
-    print(f"  Reasoning:  {reasoning}")
-
-    # Submit signal
-    signal = await client.submit_signal(
-        asset=ASSET,
-        direction=direction,
-        confidence=confidence,
-        timeframe_hours=TIMEFRAME_HOURS,
-        reasoning=reasoning,
-        stake_amount=STAKE,
-    )
-    print(f"\nSignal #{signal.id} submitted at {signal.submitted_at}")
-
-    await client.close()
+        print(f"\nSignal #{signal.id} submitted at {signal.submitted_at}")
 
 
 if __name__ == "__main__":

@@ -128,43 +128,40 @@ def sentiment_to_signal(
 # ---------------------------------------------------------------------------
 
 async def main() -> None:
-    client = SignalSwarm(api_key=API_KEY, api_url=API_URL)
+    async with SignalSwarm(api_key=API_KEY, api_url=API_URL) as client:
+        # Register agent
+        try:
+            agent = await client.register_agent(
+                name="Sentiment-Alpha",
+                description=f"Sentiment-driven signals for {ASSET}",
+                tier=Tier.STARTER,
+            )
+            print(f"Agent registered: {agent.name}")
+        except Exception as exc:
+            print(f"Agent registration skipped: {exc}")
 
-    # Register agent
-    try:
-        agent = await client.register_agent(
-            name="Sentiment-Alpha",
-            description=f"Sentiment-driven signals for {ASSET}",
-            tier=Tier.STARTER,
+        # Build sentiment and decide
+        sentiment = build_sentiment(ASSET)
+        print(f"\nSentiment for {ASSET}:")
+        print(f"  Score:   {sentiment.score:+.3f}")
+        print(f"  Sources: {sentiment.sources}")
+
+        direction, confidence, reasoning = sentiment_to_signal(sentiment)
+        print(f"\nDecision:")
+        print(f"  Direction:  {direction.value.upper()}")
+        print(f"  Confidence: {confidence}")
+        print(f"  Reasoning:  {reasoning}")
+
+        # Submit
+        signal = await client.submit_signal(
+            asset=ASSET,
+            direction=direction,
+            confidence=confidence,
+            timeframe_hours=TIMEFRAME_HOURS,
+            reasoning=reasoning,
+            stake_amount=STAKE,
         )
-        print(f"Agent registered: {agent.name}")
-    except Exception as exc:
-        print(f"Agent registration skipped: {exc}")
-
-    # Build sentiment and decide
-    sentiment = build_sentiment(ASSET)
-    print(f"\nSentiment for {ASSET}:")
-    print(f"  Score:   {sentiment.score:+.3f}")
-    print(f"  Sources: {sentiment.sources}")
-
-    direction, confidence, reasoning = sentiment_to_signal(sentiment)
-    print(f"\nDecision:")
-    print(f"  Direction:  {direction.value.upper()}")
-    print(f"  Confidence: {confidence}")
-    print(f"  Reasoning:  {reasoning}")
-
-    # Submit
-    signal = await client.submit_signal(
-        asset=ASSET,
-        direction=direction,
-        confidence=confidence,
-        timeframe_hours=TIMEFRAME_HOURS,
-        reasoning=reasoning,
-        stake_amount=STAKE,
-    )
-    print(f"\nSignal #{signal.id} submitted.")
-
-    await client.close()
+        print(f"\nSignal #{signal.id} submitted.")
 
 
 if __name__ == "__main__":
