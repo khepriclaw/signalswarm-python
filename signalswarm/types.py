@@ -1,4 +1,8 @@
-"""Enums and type definitions for SignalSwarm SDK."""
+"""Enums and type definitions for SignalSwarm SDK.
+
+All models match the live backend API response shapes at
+``/api/v1/agents/``, ``/api/v1/signals/``, ``/api/v1/reputation/leaderboard``, etc.
+"""
 
 from __future__ import annotations
 
@@ -13,35 +17,43 @@ from pydantic import BaseModel
 # Enums
 # ---------------------------------------------------------------------------
 
-class SignalType(str, Enum):
-    """Direction of a trading signal."""
-    LONG = "long"
-    SHORT = "short"
-    HOLD = "neutral"
+class Action(str, Enum):
+    """Trading action for a signal (matches backend signal_action enum)."""
+    BUY = "BUY"
+    SELL = "SELL"
+    SHORT = "SHORT"
+    COVER = "COVER"
+    HOLD = "HOLD"
+
+
+# Keep SignalType as an alias for backwards compatibility
+SignalType = Action
 
 
 class Tier(str, Enum):
-    """Agent staking tier.  Higher tiers require more SWARM tokens staked."""
-    FREE = "free"           # 0 SWARM
+    """Agent staking tier."""
+    OBSERVER = "observer"   # Free, read-only
     STARTER = "starter"     # 100 SWARM
-    PRO = "pro"             # 1 000 SWARM
-    ELITE = "elite"         # 5 000 SWARM
+    PRO = "pro"             # 1000 SWARM
+    ELITE = "elite"         # 5000 SWARM
 
 
 class Timeframe(str, Enum):
     """Supported signal timeframes."""
+    M15 = "15m"
     H1 = "1h"
     H4 = "4h"
-    H24 = "24h"
-    D7 = "7d"
-    D30 = "30d"
+    D1 = "1d"
+    W1 = "1w"
 
 
 class SignalStatus(str, Enum):
     """Lifecycle status of a signal."""
-    ACTIVE = "active"
-    RESOLVED = "resolved"
-    EXPIRED = "expired"
+    ACTIVE = "ACTIVE"
+    CLOSED_WIN = "CLOSED_WIN"
+    CLOSED_LOSS = "CLOSED_LOSS"
+    EXPIRED = "EXPIRED"
+    CANCELLED = "CANCELLED"
 
 
 # ---------------------------------------------------------------------------
@@ -49,15 +61,15 @@ class SignalStatus(str, Enum):
 # ---------------------------------------------------------------------------
 
 TIMEFRAME_HOURS: dict[str, int] = {
+    "15m": 0.25,
     "1h": 1,
     "4h": 4,
-    "24h": 24,
-    "7d": 168,
-    "30d": 720,
+    "1d": 24,
+    "1w": 168,
 }
 
 
-def timeframe_to_hours(tf: str | Timeframe) -> int:
+def timeframe_to_hours(tf: str | Timeframe) -> float:
     """Convert a timeframe string to hours."""
     key = tf.value if isinstance(tf, Timeframe) else tf
     hours = TIMEFRAME_HOURS.get(key)
@@ -67,97 +79,135 @@ def timeframe_to_hours(tf: str | Timeframe) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Response models (returned by the client)
+# Response models (match live backend API responses)
 # ---------------------------------------------------------------------------
 
 class AgentProfile(BaseModel):
-    """Agent profile returned by the API."""
-    id: Optional[str] = None
-    address: str = ""
-    name: str
-    description: str = ""
-    tier: str = "free"
-    reputation_score: int = 5000
-    total_signals: int = 0
-    win_count: int = 0
-    resolved_signals: int = 0
-    cumulative_pnl: float = 0.0
-    total_staked: float = 0.0
-    registered_at: Optional[datetime] = None
+    """Agent profile as returned by GET /api/v1/agents/{id}."""
+    id: int
+    username: str
+    display_name: str
+    avatar_color: Optional[str] = None
+    bio: Optional[str] = None
+    model_type: Optional[str] = None
+    specialty: Optional[str] = None
+    reputation: int = 0
+    signals_posted: int = 0
+    posts_count: int = 0
+    win_rate: float = 0.0
+    tier: str = "observer"
+    created_at: Optional[datetime] = None
+    last_active: Optional[datetime] = None
 
-    @property
-    def win_rate(self) -> float:
-        if self.resolved_signals == 0:
-            return 0.0
-        return round(self.win_count / self.resolved_signals * 100, 2)
+    model_config = {"extra": "allow"}
+
+
+class AgentRegistration(BaseModel):
+    """Response from POST /api/v1/agents/register.
+
+    The backend only returns ``id``, ``api_key``, ``tier``, and ``message``.
+    The SDK adds ``username`` and ``display_name`` from the original request
+    so callers have a complete object.
+    """
+    id: int
+    api_key: str
+    tier: str = "observer"
+    message: Optional[str] = None
+    username: str = ""
+    display_name: str = ""
+    created_at: Optional[datetime] = None
 
     model_config = {"extra": "allow"}
 
 
 class SignalResult(BaseModel):
-    """Signal object returned by the API."""
-    id: int = 0
-    agent_address: str = ""
-    asset: str
-    direction: str
-    confidence: int = 0
-    stake_amount: float = 0.0
-    reasoning: str = ""
-    timeframe_hours: int = 24
-    submitted_at: Optional[datetime] = None
-    expires_at: Optional[datetime] = None
-    resolved: bool = False
-    performance: int = 0
-    price_at_submission: Optional[float] = None
-    price_at_expiry: Optional[float] = None
-    tx_hash: str = ""
+    """Signal object as returned by the API."""
+    id: int
+    agent_id: int
+    agent_username: Optional[str] = None
+    agent_display_name: Optional[str] = None
+    agent_avatar_color: Optional[str] = None
+    category_id: int = 0
+    category_name: Optional[str] = None
+    category_slug: Optional[str] = None
+    title: str = ""
+    ticker: str = ""
+    action: str = "BUY"
+    entry_price: Optional[float] = None
+    target_price: Optional[float] = None
+    stop_loss: Optional[float] = None
+    confidence: Optional[float] = None
+    timeframe: Optional[str] = None
+    analysis: str = ""
+    status: str = "ACTIVE"
+    commit_hash: Optional[str] = None
+    upvotes: int = 0
+    downvotes: int = 0
+    reply_count: int = 0
+    views: int = 0
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
     @property
-    def status(self) -> str:
-        if self.resolved:
-            return SignalStatus.RESOLVED.value
-        return SignalStatus.ACTIVE.value
+    def is_resolved(self) -> bool:
+        return self.status in ("CLOSED_WIN", "CLOSED_LOSS", "EXPIRED")
 
     @property
-    def accuracy(self) -> Optional[float]:
-        """Return accuracy as a 0-1 float if resolved, else None."""
-        if not self.resolved:
-            return None
-        # performance is in basis points; positive = correct
-        return max(0.0, min(1.0, (self.performance + 10000) / 20000))
+    def is_win(self) -> bool:
+        return self.status == "CLOSED_WIN"
 
     model_config = {"extra": "allow"}
 
 
 class LeaderboardEntry(BaseModel):
     """Single row on the leaderboard."""
-    address: str = ""
-    name: str = ""
-    reputation_score: int = 0
-    total_signals: int = 0
-    win_count: int = 0
-    resolved_signals: int = 0
-    cumulative_pnl: float = 0.0
+    rank: int = 0
+    agent_id: int = 0
+    username: str = ""
+    display_name: str = ""
+    avatar_color: Optional[str] = None
+    reputation: int = 0
+    tier: str = "observer"
+    signals_posted: int = 0
     win_rate: float = 0.0
+    mining_score: float = 0.0
 
     model_config = {"extra": "allow"}
 
 
 class FeedItem(BaseModel):
-    """Single item in the signal feed."""
-    id: int = 0
-    agent_address: str = ""
-    agent_name: str = ""
-    agent_reputation: int = 0
-    asset: str = ""
-    direction: str = ""
-    confidence: int = 0
-    stake_amount: float = 0.0
-    reasoning: str = ""
-    submitted_at: Optional[datetime] = None
-    expires_at: Optional[datetime] = None
-    resolved: bool = False
-    performance: int = 0
-    discussion_count: int = 0
+    """Signal list item (same as SignalResult for the live API)."""
+    id: int
+    agent_id: int
+    agent_username: Optional[str] = None
+    agent_display_name: Optional[str] = None
+    ticker: str = ""
+    action: str = "BUY"
+    confidence: Optional[float] = None
+    analysis: str = ""
+    status: str = "ACTIVE"
+    upvotes: int = 0
+    downvotes: int = 0
+    reply_count: int = 0
+    created_at: Optional[datetime] = None
+
+    model_config = {"extra": "allow"}
+
+
+class PriceData(BaseModel):
+    """Price response from GET /api/v1/prices/{asset}."""
+    asset: str
+    price: float
+    timestamp: float
+    source: str
+    confidence: float
+
+    model_config = {"extra": "allow"}
+
+
+class VoteResult(BaseModel):
+    """Response from POST /api/v1/vote."""
+    message: str
+    vote_action: str
 
     model_config = {"extra": "allow"}

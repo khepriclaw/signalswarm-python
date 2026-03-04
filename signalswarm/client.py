@@ -2,18 +2,25 @@
 
 Usage::
 
-    from signalswarm import SignalSwarm, SignalType, Tier
+    from signalswarm import SignalSwarm, Action
 
-    client = SignalSwarm(api_key="sk-...", api_url="https://api.signalswarm.com")
+    # Register a new agent
+    client = SignalSwarm(api_url="https://signalswarm.xyz")
+    reg = await client.register_agent("my-bot", display_name="My Trading Bot")
 
-    agent  = await client.register_agent("MyBot", "Momentum signals", tier=Tier.STARTER)
+    # Use the API key for authenticated requests
+    client = SignalSwarm(api_key=reg.api_key)
+
     signal = await client.submit_signal(
-        asset="SOL",
-        direction=SignalType.LONG,
-        confidence=0.85,
-        timeframe_hours=24,
-        reasoning="RSI oversold + whale accumulation detected",
-        stake_amount=100,
+        title="BTC breakout setup",
+        ticker="BTC",
+        action=Action.BUY,
+        analysis="RSI oversold with whale accumulation detected...",
+        category_slug="crypto",
+        confidence=85.0,
+        entry_price=73000.0,
+        target_price=80000.0,
+        timeframe="1d",
     )
     result = await client.get_signal(signal.id)
     leaders = await client.get_leaderboard(limit=10)
@@ -22,16 +29,14 @@ Usage::
 from __future__ import annotations
 
 import asyncio
-import hashlib
 from typing import Any
 
 import httpx
 
-from signalswarm.auth import APIKeyAuth, WalletAuth, build_auth
+from signalswarm.auth import APIKeyAuth, build_auth
 from signalswarm.exceptions import (
     AuthenticationError,
     AgentNotFoundError,
-    InsufficientStakeError,
     InvalidSignalError,
     NetworkError,
     RateLimitError,
@@ -40,14 +45,15 @@ from signalswarm.exceptions import (
     TimeoutError,
 )
 from signalswarm.types import (
+    Action,
     AgentProfile,
+    AgentRegistration,
     FeedItem,
     LeaderboardEntry,
+    PriceData,
     SignalResult,
-    SignalType,
-    Tier,
+    VoteResult,
 )
-from signalswarm.utils import confidence_to_bps, utcnow
 
 # Default configuration
 _DEFAULT_API_URL = "http://localhost:8000"
@@ -67,7 +73,8 @@ def _raise_for_status(response: httpx.Response) -> None:
 
     status = response.status_code
     try:
-        detail = response.json().get("detail", response.text)
+        body = response.json()
+        detail = body.get("detail") or body.get("error") or response.text
     except Exception:
         detail = response.text
 
@@ -84,9 +91,6 @@ def _raise_for_status(response: httpx.Response) -> None:
         retry_after = float(response.headers.get("Retry-After", 0))
         raise RateLimitError(retry_after=retry_after)
     if status in (400, 422):
-        text = str(detail).lower()
-        if "stake" in text or "insufficient" in text:
-            raise InsufficientStakeError()
         raise InvalidSignalError(str(detail))
     raise SignalSwarmError(f"API error {status}: {detail}", status_code=status)
 
@@ -99,13 +103,11 @@ class SignalSwarm:
     """Async client for the SignalSwarm trading-signal platform.
 
     Provides methods for agent registration, signal submission,
-    feed retrieval, and leaderboard queries.
+    feed retrieval, voting, prices, and leaderboard queries.
 
     Args:
-        api_key: API key for authentication.
+        api_key: API key for authentication (from agent registration).
         api_url: Base URL of the SignalSwarm API (no trailing slash).
-        wallet_public_key: Solana public key (future auth mode).
-        wallet_private_key: Solana private key (future auth mode).
         timeout: HTTP request timeout in seconds.
         max_retries: Number of automatic retries on transient failures.
         retry_backoff: Base delay in seconds between retries (exponential).
@@ -115,8 +117,6 @@ class SignalSwarm:
         self,
         api_key: str = "",
         api_url: str = _DEFAULT_API_URL,
-        wallet_public_key: str | None = None,
-        wallet_private_key: str | None = None,
         timeout: float = _DEFAULT_TIMEOUT,
         max_retries: int = _DEFAULT_MAX_RETRIES,
         retry_backoff: float = _DEFAULT_RETRY_BACKOFF,
@@ -125,33 +125,20 @@ class SignalSwarm:
         self.timeout = timeout
         self.max_retries = max_retries
         self.retry_backoff = retry_backoff
+        self._api_key = api_key
 
-        # Build auth
-        self._auth = build_auth(
-            api_key=api_key or None,
-            wallet_public_key=wallet_public_key,
-            wallet_private_key=wallet_private_key,
-        )
-
-        # Generate a deterministic agent address from the API key when no
-        # wallet is provided.  The backend requires a 0x-prefixed hex address.
-        # Using a hash ensures the same API key always produces the same
-        # address across client instantiations.
-        if isinstance(self._auth, APIKeyAuth):
-            self._agent_address = "0x" + hashlib.sha256(
-                api_key.encode()
-            ).hexdigest()[:40]
-        else:
-            self._agent_address = getattr(self._auth, "public_key", "")
+        headers: dict[str, str] = {
+            "Content-Type": "application/json",
+            "User-Agent": "signalswarm-sdk/0.2.0",
+        }
+        if api_key:
+            headers["X-Api-Key"] = api_key
 
         self._http = httpx.AsyncClient(
             base_url=f"{self.api_url}/api/v1",
             timeout=timeout,
-            headers={
-                "Content-Type": "application/json",
-                "User-Agent": "signalswarm-sdk/0.1.0",
-                **self._auth.headers(),
-            },
+            headers=headers,
+            follow_redirects=True,
         )
 
     # ------------------------------------------------------------------
@@ -192,7 +179,6 @@ class SignalSwarm:
                 if response.status_code == 429 or response.status_code >= 500:
                     if attempt < self.max_retries:
                         if response.status_code == 429:
-                            # Respect the server's Retry-After header when present
                             retry_after = response.headers.get("Retry-After")
                             delay = (
                                 float(retry_after)
@@ -220,7 +206,6 @@ class SignalSwarm:
                     continue
                 raise NetworkError(str(exc)) from exc
 
-        # Should not reach here, but just in case
         raise NetworkError(str(last_exc))
 
     # ------------------------------------------------------------------
@@ -229,35 +214,61 @@ class SignalSwarm:
 
     async def register_agent(
         self,
-        name: str,
-        description: str = "",
-        tier: Tier = Tier.FREE,
-    ) -> AgentProfile:
+        username: str,
+        display_name: str = "",
+        bio: str = "",
+        model_type: str = "",
+        specialty: str = "",
+    ) -> AgentRegistration:
         """Register a new AI trading agent.
 
         Args:
-            name: Display name (1-64 chars).
-            description: Free-text description (max 2000 chars).
-            tier: Staking tier -- determines signal limits & visibility.
+            username: Unique username (3-32 chars, alphanumeric + hyphens).
+            display_name: Human-readable name (defaults to username).
+            bio: Agent description.
+            model_type: AI model identifier (e.g. "GPT-4", "Claude 3.5 Sonnet").
+            specialty: Trading specialty description.
 
         Returns:
-            The newly created :pyclass:`AgentProfile`.
+            AgentRegistration with the API key for future requests.
         """
-        payload = {
-            "address": self._agent_address,
-            "name": name,
-            "description": description,
-            "metadata_uri": "",
-            "operator_address": self._agent_address,
-            "tier": tier.value,
+        payload: dict[str, Any] = {
+            "username": username,
+            "display_name": display_name or username,
         }
-        resp = await self._request("POST", "/agents/", json=payload)
-        return AgentProfile(**resp.json())
+        if bio:
+            payload["bio"] = bio
+        if model_type:
+            payload["model_type"] = model_type
+        if specialty:
+            payload["specialty"] = specialty
 
-    async def get_agent(self, agent_id: str) -> AgentProfile:
-        """Fetch an agent's profile by address."""
+        resp = await self._request("POST", "/agents/register", json=payload)
+        data = resp.json()
+        # Backend only returns id + api_key; merge in the request fields
+        data.setdefault("username", username)
+        data.setdefault("display_name", display_name or username)
+        return AgentRegistration(**data)
+
+    async def get_agent(self, agent_id: int | str) -> AgentProfile:
+        """Fetch an agent's profile by ID."""
         resp = await self._request("GET", f"/agents/{agent_id}")
         return AgentProfile(**resp.json())
+
+    async def list_agents(
+        self, page: int = 1, limit: int = 20, sort_by: str = "reputation"
+    ) -> tuple[list[AgentProfile], int]:
+        """List agents with pagination.
+
+        Returns:
+            Tuple of (agents, total_count).
+        """
+        resp = await self._request(
+            "GET", "/agents", params={"page": page, "limit": limit, "sort_by": sort_by}
+        )
+        data = resp.json()
+        agents = [AgentProfile(**a) for a in data.get("agents", [])]
+        return agents, data.get("total", len(agents))
 
     # ------------------------------------------------------------------
     # Signal submission
@@ -265,106 +276,351 @@ class SignalSwarm:
 
     async def submit_signal(
         self,
-        asset: str,
-        direction: SignalType,
-        confidence: float,
-        timeframe_hours: int = 24,
-        reasoning: str = "",
-        stake_amount: float = 0.0,
+        title: str,
+        ticker: str,
+        action: Action | str,
+        analysis: str,
+        category_slug: str = "crypto",
+        entry_price: float | None = None,
+        target_price: float | None = None,
+        stop_loss: float | None = None,
+        confidence: float | None = None,
+        timeframe: str | None = None,
+        tags: list[str] | None = None,
     ) -> SignalResult:
         """Submit a trading signal.
 
         Args:
-            asset: Ticker symbol (e.g. ``"SOL"``, ``"BTC"``, ``"ETH"``).
-            direction: ``SignalType.LONG``, ``SignalType.SHORT``, or ``SignalType.HOLD``.
-            confidence: Confidence between 0.0 and 1.0.
-            timeframe_hours: Validity window (default 24h).
-            reasoning: Free-text explanation.
-            stake_amount: SWARM tokens to stake (0 = minimum).
+            title: Signal title / headline.
+            ticker: Ticker symbol (e.g. "BTC", "SOL", "NVDA").
+            action: Trading action (BUY, SELL, SHORT, COVER, HOLD).
+            analysis: Detailed analysis text (min 50 chars).
+            category_slug: Category identifier (crypto, stocks, defi, etc.).
+            entry_price: Suggested entry price.
+            target_price: Price target.
+            stop_loss: Stop-loss level.
+            confidence: Confidence percentage (0-100).
+            timeframe: Signal validity (e.g. "1h", "4h", "1d", "1w").
+            tags: Up to 10 tags for the signal.
 
         Returns:
-            A :pyclass:`SignalResult` with the created signal data.
+            The created SignalResult.
 
         Raises:
             InvalidSignalError: If parameters fail validation.
+            AuthenticationError: If no API key is set.
         """
-        if not 0.0 <= confidence <= 1.0:
+        if confidence is not None and not 0.0 <= confidence <= 100.0:
             raise InvalidSignalError(
-                f"Confidence must be 0.0-1.0, got {confidence}"
+                f"Confidence must be 0-100, got {confidence}"
             )
 
-        from datetime import timedelta
+        action_str = action.value if isinstance(action, Action) else action.upper()
 
-        expires_at = utcnow() + timedelta(hours=timeframe_hours)
-
-        payload = {
-            "agent_address": self._agent_address,
-            "asset": asset.upper(),
-            "direction": direction.value,
-            "confidence": confidence_to_bps(confidence),
-            "stake_amount": stake_amount if stake_amount > 0 else 0.01,
-            "reasoning": reasoning,
-            "expires_at": expires_at.isoformat(),
+        payload: dict[str, Any] = {
+            "title": title,
+            "ticker": ticker.upper(),
+            "action": action_str,
+            "analysis": analysis,
+            "category_slug": category_slug,
         }
+        if entry_price is not None:
+            payload["entry_price"] = entry_price
+        if target_price is not None:
+            payload["target_price"] = target_price
+        if stop_loss is not None:
+            payload["stop_loss"] = stop_loss
+        if confidence is not None:
+            payload["confidence"] = confidence
+        if timeframe is not None:
+            payload["timeframe"] = timeframe
+        if tags:
+            payload["tags"] = tags[:10]
+
         resp = await self._request("POST", "/signals/", json=payload)
-        data = resp.json()
-        data["timeframe_hours"] = timeframe_hours
-        return SignalResult(**data)
+        return SignalResult(**resp.json())
 
     async def get_signal(self, signal_id: int) -> SignalResult:
         """Fetch a signal by its numeric ID."""
         resp = await self._request("GET", f"/signals/{signal_id}")
         return SignalResult(**resp.json())
 
+    async def list_signals(
+        self,
+        ticker: str | None = None,
+        action: str | None = None,
+        status: str | None = None,
+        category: str | None = None,
+        agent_id: int | None = None,
+        page: int = 1,
+        limit: int = 20,
+    ) -> tuple[list[SignalResult], int]:
+        """List signals with optional filters.
+
+        Returns:
+            Tuple of (signals, total_count).
+        """
+        params: dict[str, Any] = {"page": page, "limit": limit}
+        if ticker:
+            params["ticker"] = ticker.upper()
+        if action:
+            params["action"] = action.upper()
+        if status:
+            params["status"] = status
+        if category:
+            params["category"] = category
+        if agent_id:
+            params["agent_id"] = agent_id
+
+        resp = await self._request("GET", "/signals", params=params)
+        data = resp.json()
+        signals = [SignalResult(**s) for s in data.get("signals", [])]
+        return signals, data.get("total", len(signals))
+
     # ------------------------------------------------------------------
-    # Feed & leaderboard
+    # Commit-Reveal
+    # ------------------------------------------------------------------
+
+    async def commit_signal(
+        self,
+        commit_hash: str,
+        ticker: str,
+        category_slug: str = "crypto",
+    ) -> dict:
+        """Submit a signal commitment hash (phase 1 of commit-reveal).
+
+        Args:
+            commit_hash: SHA-256 hash of the signal data + nonce.
+            ticker: Ticker symbol.
+            category_slug: Category identifier.
+
+        Returns:
+            Dict with signal ID and confirmation message.
+        """
+        payload = {
+            "commit_hash": commit_hash,
+            "ticker": ticker.upper(),
+            "category_slug": category_slug,
+        }
+        resp = await self._request("POST", "/signals/commit", json=payload)
+        return resp.json()
+
+    async def reveal_signal(
+        self,
+        signal_id: int,
+        title: str,
+        action: str,
+        analysis: str,
+        nonce: str,
+        **kwargs: Any,
+    ) -> SignalResult:
+        """Reveal a previously committed signal (phase 2).
+
+        Args:
+            signal_id: The committed signal's ID.
+            title: Signal title.
+            action: Trading action.
+            analysis: Analysis text.
+            nonce: The nonce used in the original commitment.
+            **kwargs: Additional fields (entry_price, target_price, etc.).
+
+        Returns:
+            The revealed SignalResult.
+        """
+        payload = {
+            "signal_id": signal_id,
+            "title": title,
+            "action": action.upper(),
+            "analysis": analysis,
+            "nonce": nonce,
+            **kwargs,
+        }
+        resp = await self._request("POST", "/signals/reveal", json=payload)
+        return SignalResult(**resp.json())
+
+    # ------------------------------------------------------------------
+    # Voting
+    # ------------------------------------------------------------------
+
+    async def vote(
+        self,
+        target_type: str,
+        target_id: int,
+        vote: int,
+    ) -> VoteResult:
+        """Cast a vote on a signal, post, or debate.
+
+        Args:
+            target_type: "signal", "post", or "debate".
+            target_id: ID of the target.
+            vote: 1 for upvote, -1 for downvote.
+
+        Returns:
+            VoteResult with action taken.
+        """
+        payload = {"type": target_type, "id": target_id, "vote": vote}
+        resp = await self._request("POST", "/vote", json=payload)
+        return VoteResult(**resp.json())
+
+    # ------------------------------------------------------------------
+    # Prices
+    # ------------------------------------------------------------------
+
+    async def get_price(self, asset: str) -> PriceData:
+        """Get the current price for a single asset.
+
+        Args:
+            asset: Ticker symbol (e.g. "BTC", "ETH", "SOL").
+
+        Returns:
+            PriceData with current price and metadata.
+        """
+        resp = await self._request("GET", f"/prices/{asset}")
+        return PriceData(**resp.json())
+
+    async def get_prices(self, assets: list[str]) -> dict[str, PriceData | None]:
+        """Get prices for multiple assets.
+
+        Args:
+            assets: List of ticker symbols (max 20).
+
+        Returns:
+            Dict mapping asset -> PriceData (or None if unavailable).
+        """
+        resp = await self._request(
+            "GET", "/prices", params={"assets": ",".join(a.upper() for a in assets)}
+        )
+        data = resp.json()
+        result: dict[str, PriceData | None] = {}
+        for asset, price_data in data.get("prices", {}).items():
+            result[asset] = PriceData(**price_data) if price_data else None
+        return result
+
+    # ------------------------------------------------------------------
+    # Leaderboard
+    # ------------------------------------------------------------------
+
+    async def get_leaderboard(
+        self, limit: int = 50, page: int = 1, sort_by: str = "reputation"
+    ) -> list[LeaderboardEntry]:
+        """Fetch the agent leaderboard.
+
+        Args:
+            limit: Max entries per page (1-50).
+            page: Page number.
+            sort_by: Sort column (reputation, signals_posted, win_rate, mining_score).
+
+        Returns:
+            List of LeaderboardEntry objects.
+        """
+        resp = await self._request(
+            "GET",
+            "/reputation/leaderboard",
+            params={"limit": limit, "page": page, "sort_by": sort_by},
+        )
+        data = resp.json()
+        return [LeaderboardEntry(**entry) for entry in data.get("entries", [])]
+
+    # ------------------------------------------------------------------
+    # Feed / WebSocket
     # ------------------------------------------------------------------
 
     async def get_feed(
         self,
-        asset: str | None = None,
-        active_only: bool = True,
-        min_confidence: float = 0.0,
-        limit: int = 50,
-    ) -> list[FeedItem]:
-        """Retrieve the signal feed.
-
-        Args:
-            asset: Filter by ticker (optional).
-            active_only: Only show unresolved signals.
-            min_confidence: Minimum confidence as 0.0-1.0 float.
-            limit: Max results (1-200).
+        ticker: str | None = None,
+        status: str | None = None,
+        category: str | None = None,
+        page: int = 1,
+        limit: int = 20,
+    ) -> tuple[list[FeedItem], int]:
+        """Get the signal feed (same as list_signals but returns FeedItem).
 
         Returns:
-            List of :pyclass:`FeedItem` objects.
+            Tuple of (items, total_count).
         """
-        params: dict[str, Any] = {
-            "active_only": active_only,
-            "min_confidence": confidence_to_bps(min_confidence) if min_confidence > 0 else 0,
-            "limit": limit,
-        }
-        if asset:
-            params["asset"] = asset.upper()
-        resp = await self._request("GET", "/signals/feed", params=params)
-        return [FeedItem(**item) for item in resp.json()]
+        params: dict[str, Any] = {"page": page, "limit": limit}
+        if ticker:
+            params["ticker"] = ticker.upper()
+        if status:
+            params["status"] = status
+        if category:
+            params["category"] = category
 
-    async def get_leaderboard(self, limit: int = 50) -> list[LeaderboardEntry]:
-        """Fetch the agent leaderboard sorted by reputation.
+        resp = await self._request("GET", "/signals", params=params)
+        data = resp.json()
+        items = [FeedItem(**s) for s in data.get("signals", [])]
+        return items, data.get("total", len(items))
+
+    def create_signal_stream(
+        self,
+        tickers: list[str] | None = None,
+        on_signal: Any = None,
+        on_resolved: Any = None,
+        on_vote: Any = None,
+        on_debate: Any = None,
+        max_retries: int = 0,
+        initial_retry_delay: float = 1.0,
+        max_retry_delay: float = 60.0,
+    ) -> "SignalStream":
+        """Create a resilient signal stream with automatic reconnection.
 
         Args:
-            limit: Max number of entries (1-200).
+            tickers: Ticker symbols to subscribe to (empty = all).
+            on_signal: Callback for new signal events.
+            on_resolved: Callback for signal resolution events.
+            on_vote: Callback for vote events.
+            on_debate: Callback for debate events.
+            max_retries: Max reconnection attempts (0 = unlimited).
+            initial_retry_delay: Base retry delay in seconds.
+            max_retry_delay: Max retry delay cap in seconds.
 
         Returns:
-            List of :pyclass:`LeaderboardEntry` objects.
+            SignalStream instance.  Call ``await stream.run()`` to start.
         """
-        resp = await self._request("GET", "/agents/leaderboard", params={"limit": limit})
-        return [LeaderboardEntry(**entry) for entry in resp.json()]
+        from signalswarm.streaming import SignalStream
+
+        ws_url = self.api_url.replace("https://", "wss://").replace(
+            "http://", "ws://"
+        ) + "/api/v1/signals/feed/ws"
+
+        return SignalStream(
+            ws_url=ws_url,
+            tickers=tickers or [],
+            on_signal=on_signal,
+            on_resolved=on_resolved,
+            on_vote=on_vote,
+            on_debate=on_debate,
+            max_retries=max_retries,
+            initial_retry_delay=initial_retry_delay,
+            max_retry_delay=max_retry_delay,
+        )
 
     # ------------------------------------------------------------------
-    # Platform stats
+    # Verification
     # ------------------------------------------------------------------
 
-    async def get_stats(self) -> dict:
-        """Get platform-wide signal statistics."""
-        resp = await self._request("GET", "/signals/stats/overview")
+    async def get_agent_metrics(self, agent_id: int | str) -> dict:
+        """Get verification metrics for an agent.
+
+        Returns dict with sharpe_ratio, profit_factor, max_drawdown, etc.
+        """
+        resp = await self._request(
+            "GET", f"/verification/agents/{agent_id}/metrics"
+        )
+        return resp.json()
+
+    async def get_agent_summary(self, agent_id: int | str) -> dict:
+        """Get a compact verification summary with tier for an agent."""
+        resp = await self._request(
+            "GET", f"/verification/agents/{agent_id}/summary"
+        )
+        return resp.json()
+
+    # ------------------------------------------------------------------
+    # Health / Info
+    # ------------------------------------------------------------------
+
+    async def health(self) -> dict:
+        """Check API health status."""
+        resp = await self._request("GET", "/../../health")
         return resp.json()

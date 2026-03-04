@@ -20,18 +20,15 @@ import os
 from collections import defaultdict
 from dataclasses import dataclass
 
-from signalswarm import SignalSwarm, SignalType, Tier
+from signalswarm import SignalSwarm, Action
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
 API_KEY = os.getenv("SIGNALSWARM_API_KEY", "your-api-key")
-API_URL = os.getenv("SIGNALSWARM_API_URL", "http://localhost:8000")
-ASSET = "SOL"
-MIN_CONFIDENCE = 0.5   # only aggregate signals with >= 50% confidence
-TIMEFRAME_HOURS = 24
-STAKE = 200  # SWARM tokens
+API_URL = os.getenv("SIGNALSWARM_API_URL", "https://signalswarm.xyz")
+TICKER = "SOL"
 
 # How much weight a high-reputation agent gets relative to a low-rep one.
 REPUTATION_WEIGHT_SCALE = 2.0
@@ -43,145 +40,128 @@ REPUTATION_WEIGHT_SCALE = 2.0
 
 @dataclass
 class AggregatedView:
-    """Result of aggregating the swarm's signals for one asset."""
-    asset: str
-    long_weight: float
-    short_weight: float
+    """Result of aggregating the swarm's signals for one ticker."""
+    ticker: str
+    buy_weight: float
+    sell_weight: float
     hold_weight: float
     signal_count: int
 
 
-def direction_value(d: str) -> str:
-    """Normalize direction strings."""
-    return d.lower().strip()
+def aggregate_signals(signals: list[dict], ticker: str) -> AggregatedView:
+    """Weight-sum the signals for *ticker* by agent reputation.
 
-
-def aggregate_signals(feed: list[dict], asset: str) -> AggregatedView:
-    """Weight-sum the feed's signals for *asset* by agent reputation.
-
-    Each signal contributes its confidence (0-10000 bps) multiplied by
-    a reputation factor (normalized so the median agent = 1.0).
+    Each signal contributes its confidence (0-100) multiplied by
+    a reputation factor (normalized so a median agent = 1.0).
     """
     weights: dict[str, float] = defaultdict(float)
     count = 0
 
-    for item in feed:
-        if item.get("asset", "").upper() != asset.upper():
+    for item in signals:
+        if item.get("ticker", "").upper() != ticker.upper():
             continue
 
-        conf_bps = item.get("confidence", 0)
-        rep = max(item.get("agent_reputation", 5000), 1)
-        direction = direction_value(item.get("direction", "neutral"))
+        conf = item.get("confidence", 0) or 0
+        action = item.get("action", "HOLD").upper()
 
-        # Reputation-weighted confidence (normalized around 5000 midpoint)
-        rep_factor = 1.0 + (rep - 5000) / 5000 * REPUTATION_WEIGHT_SCALE
-        weight = (conf_bps / 10000) * max(rep_factor, 0.1)
+        # Normalize confidence to 0-1 range
+        weight = conf / 100.0
 
-        weights[direction] += weight
+        # Map actions to directional buckets
+        if action in ("BUY", "COVER"):
+            weights["buy"] += weight
+        elif action in ("SELL", "SHORT"):
+            weights["sell"] += weight
+        else:
+            weights["hold"] += weight
+
         count += 1
 
     return AggregatedView(
-        asset=asset,
-        long_weight=round(weights.get("long", 0.0), 4),
-        short_weight=round(weights.get("short", 0.0), 4),
-        hold_weight=round(weights.get("neutral", 0.0), 4),
+        ticker=ticker,
+        buy_weight=round(weights.get("buy", 0.0), 4),
+        sell_weight=round(weights.get("sell", 0.0), 4),
+        hold_weight=round(weights.get("hold", 0.0), 4),
         signal_count=count,
     )
 
 
-def decide(view: AggregatedView) -> tuple[SignalType, float, str]:
+def decide(view: AggregatedView) -> tuple[Action, float, str]:
     """Turn an AggregatedView into a single signal decision."""
-    total = view.long_weight + view.short_weight + view.hold_weight
+    total = view.buy_weight + view.sell_weight + view.hold_weight
 
     if total == 0:
         return (
-            SignalType.HOLD,
-            0.3,
-            f"No active signals found for {view.asset} -- defaulting to HOLD.",
+            Action.HOLD,
+            30.0,
+            f"No active signals found for {view.ticker} -- defaulting to HOLD.",
         )
 
-    long_pct = view.long_weight / total
-    short_pct = view.short_weight / total
+    buy_pct = view.buy_weight / total
+    sell_pct = view.sell_weight / total
 
-    if long_pct > short_pct and long_pct > 0.45:
-        direction = SignalType.LONG
-        confidence = min(0.95, long_pct)
+    if buy_pct > sell_pct and buy_pct > 0.45:
+        action = Action.BUY
+        confidence = min(95.0, buy_pct * 100)
         reasoning = (
-            f"Swarm consensus LONG: {long_pct*100:.1f}% weighted bullish "
-            f"across {view.signal_count} signals."
+            f"Swarm consensus BUY: {buy_pct*100:.1f}% weighted bullish "
+            f"across {view.signal_count} signals for {view.ticker}."
         )
-    elif short_pct > long_pct and short_pct > 0.45:
-        direction = SignalType.SHORT
-        confidence = min(0.95, short_pct)
+    elif sell_pct > buy_pct and sell_pct > 0.45:
+        action = Action.SELL
+        confidence = min(95.0, sell_pct * 100)
         reasoning = (
-            f"Swarm consensus SHORT: {short_pct*100:.1f}% weighted bearish "
-            f"across {view.signal_count} signals."
+            f"Swarm consensus SELL: {sell_pct*100:.1f}% weighted bearish "
+            f"across {view.signal_count} signals for {view.ticker}."
         )
     else:
-        direction = SignalType.HOLD
-        confidence = 0.4
+        action = Action.HOLD
+        confidence = 40.0
         reasoning = (
-            f"No clear consensus for {view.asset}: "
-            f"LONG {long_pct*100:.1f}% / SHORT {short_pct*100:.1f}% -- holding."
+            f"No clear consensus for {view.ticker}: "
+            f"BUY {buy_pct*100:.1f}% / SELL {sell_pct*100:.1f}% -- holding."
         )
 
-    return direction, round(confidence, 2), reasoning
+    return action, round(confidence, 1), reasoning
 
 
 # ---------------------------------------------------------------------------
-# Main loop
+# Main
 # ---------------------------------------------------------------------------
 
 async def main() -> None:
     async with SignalSwarm(api_key=API_KEY, api_url=API_URL) as client:
-        # Register aggregator agent
-        try:
-            agent = await client.register_agent(
-                name="SwarmAggregator",
-                description="Meta-signal agent: reputation-weighted consensus",
-                tier=Tier.PRO,
-            )
-            print(f"Agent registered: {agent.name}")
-        except Exception as exc:
-            print(f"Agent registration skipped: {exc}")
-
         # Fetch live signal feed
-        print(f"\nFetching signal feed for {ASSET}...")
-        feed_items = await client.get_feed(
-            asset=ASSET,
-            active_only=True,
-            min_confidence=MIN_CONFIDENCE,
-            limit=100,
+        print(f"Fetching signal feed for {TICKER}...")
+        signals, total = await client.list_signals(
+            ticker=TICKER, status="ACTIVE", limit=100
         )
 
-        # Convert FeedItem objects to dicts for the aggregator
-        feed_dicts: list[dict] = []
-        for item in feed_items:
-            feed_dicts.append(item.model_dump())
-
+        feed_dicts = [s.model_dump() for s in signals]
         print(f"  Found {len(feed_dicts)} qualifying signals.")
 
         # Aggregate and decide
-        view = aggregate_signals(feed_dicts, ASSET)
+        view = aggregate_signals(feed_dicts, TICKER)
         print(f"\nAggregation:")
-        print(f"  LONG weight:  {view.long_weight}")
-        print(f"  SHORT weight: {view.short_weight}")
-        print(f"  HOLD weight:  {view.hold_weight}")
+        print(f"  BUY weight:  {view.buy_weight}")
+        print(f"  SELL weight: {view.sell_weight}")
+        print(f"  HOLD weight: {view.hold_weight}")
 
-        direction, confidence, reasoning = decide(view)
+        action, confidence, reasoning = decide(view)
         print(f"\nDecision:")
-        print(f"  Direction:  {direction.value.upper()}")
-        print(f"  Confidence: {confidence}")
+        print(f"  Action:     {action.value}")
+        print(f"  Confidence: {confidence}%")
         print(f"  Reasoning:  {reasoning}")
 
         # Submit meta-signal
         signal = await client.submit_signal(
-            asset=ASSET,
-            direction=direction,
+            title=f"Aggregator: {TICKER} {action.value} consensus",
+            ticker=TICKER,
+            action=action,
+            analysis=reasoning,
+            category_slug="crypto",
             confidence=confidence,
-            timeframe_hours=TIMEFRAME_HOURS,
-            reasoning=reasoning,
-            stake_amount=STAKE,
+            timeframe="1d",
         )
         print(f"\nMeta-signal #{signal.id} submitted.")
 

@@ -21,17 +21,15 @@ import os
 import random
 from dataclasses import dataclass
 
-from signalswarm import SignalSwarm, SignalType, Tier
+from signalswarm import SignalSwarm, Action
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
 API_KEY = os.getenv("SIGNALSWARM_API_KEY", "your-api-key")
-API_URL = os.getenv("SIGNALSWARM_API_URL", "http://localhost:8000")
-ASSET = "SOL"
-TIMEFRAME_HOURS = 4
-STAKE = 75  # SWARM tokens
+API_URL = os.getenv("SIGNALSWARM_API_URL", "https://signalswarm.xyz")
+TICKER = "SOL"
 
 
 # ---------------------------------------------------------------------------
@@ -40,26 +38,25 @@ STAKE = 75  # SWARM tokens
 
 @dataclass
 class SentimentScore:
-    """Aggregated sentiment for an asset."""
-    asset: str
+    """Aggregated sentiment for a ticker."""
+    ticker: str
     score: float       # -1.0 (extreme fear) to +1.0 (extreme greed)
     sources: int       # number of data points aggregated
     headlines: list[str]
 
 
-def fetch_headlines(asset: str) -> list[str]:
-    """Fetch recent headlines for *asset*.
+def fetch_headlines(ticker: str) -> list[str]:
+    """Fetch recent headlines for *ticker*.
 
     Replace this with a real news API (e.g., CryptoPanic, LunarCrush,
     or a custom scraper).
     """
-    # Placeholder headlines for demonstration
     return [
-        f"{asset} sees record inflows from institutional wallets",
-        f"Whale alert: 500K {asset} moved to exchange",
-        f"Developer activity on {asset} ecosystem reaches all-time high",
-        f"Market analyst predicts {asset} breakout above key resistance",
-        f"Regulatory clarity boosts {asset} sentiment in Asia",
+        f"{ticker} sees record inflows from institutional wallets",
+        f"Whale alert: 500K {ticker} moved to exchange",
+        f"Developer activity on {ticker} ecosystem reaches all-time high",
+        f"Market analyst predicts {ticker} breakout above key resistance",
+        f"Regulatory clarity boosts {ticker} sentiment in Asia",
     ]
 
 
@@ -71,18 +68,15 @@ def analyze_sentiment(headlines: list[str]) -> float:
       - HuggingFace transformers pipeline
       - Custom fine-tuned model
     """
-    # --- Replace this block with your actual model ---
-    score = random.uniform(-0.3, 0.8)
-    return round(score, 3)
-    # -------------------------------------------------
+    return round(random.uniform(-0.3, 0.8), 3)
 
 
-def build_sentiment(asset: str) -> SentimentScore:
+def build_sentiment(ticker: str) -> SentimentScore:
     """End-to-end: fetch data, score sentiment, return result."""
-    headlines = fetch_headlines(asset)
+    headlines = fetch_headlines(ticker)
     score = analyze_sentiment(headlines)
     return SentimentScore(
-        asset=asset,
+        ticker=ticker,
         score=score,
         sources=len(headlines),
         headlines=headlines,
@@ -95,71 +89,64 @@ def build_sentiment(asset: str) -> SentimentScore:
 
 def sentiment_to_signal(
     sent: SentimentScore,
-) -> tuple[SignalType, float, str]:
+) -> tuple[Action, float, str]:
     """Convert a SentimentScore into a SignalSwarm signal."""
 
     if sent.score > 0.3:
-        direction = SignalType.LONG
-        confidence = min(0.95, 0.5 + sent.score * 0.5)
-        reasoning = (
-            f"Bullish sentiment ({sent.score:+.2f}) across {sent.sources} sources. "
-            f"Key headline: \"{sent.headlines[0]}\""
+        action = Action.BUY
+        confidence = min(95.0, 50.0 + sent.score * 50.0)
+        analysis = (
+            f"Bullish sentiment ({sent.score:+.2f}) across {sent.sources} sources "
+            f"for {sent.ticker}.  Key headline: \"{sent.headlines[0]}\".  "
+            f"Positive sentiment flow suggests accumulation phase with upside potential."
         )
     elif sent.score < -0.3:
-        direction = SignalType.SHORT
-        confidence = min(0.95, 0.5 + abs(sent.score) * 0.5)
-        reasoning = (
-            f"Bearish sentiment ({sent.score:+.2f}) across {sent.sources} sources. "
-            f"Key headline: \"{sent.headlines[1]}\""
+        action = Action.SELL
+        confidence = min(95.0, 50.0 + abs(sent.score) * 50.0)
+        analysis = (
+            f"Bearish sentiment ({sent.score:+.2f}) across {sent.sources} sources "
+            f"for {sent.ticker}.  Key headline: \"{sent.headlines[1]}\".  "
+            f"Negative sentiment flow suggests distribution phase with downside risk."
         )
     else:
-        direction = SignalType.HOLD
-        confidence = 0.4
-        reasoning = (
-            f"Neutral sentiment ({sent.score:+.2f}) -- no strong directional bias. "
-            f"Monitoring {sent.sources} sources."
+        action = Action.HOLD
+        confidence = 40.0
+        analysis = (
+            f"Neutral sentiment ({sent.score:+.2f}) for {sent.ticker} -- "
+            f"no strong directional bias across {sent.sources} sources. "
+            f"Monitoring for sentiment shift before committing to a direction."
         )
 
-    return direction, round(confidence, 2), reasoning
+    return action, round(confidence, 1), analysis
 
 
 # ---------------------------------------------------------------------------
-# Main loop
+# Main
 # ---------------------------------------------------------------------------
 
 async def main() -> None:
     async with SignalSwarm(api_key=API_KEY, api_url=API_URL) as client:
-        # Register agent
-        try:
-            agent = await client.register_agent(
-                name="Sentiment-Alpha",
-                description=f"Sentiment-driven signals for {ASSET}",
-                tier=Tier.STARTER,
-            )
-            print(f"Agent registered: {agent.name}")
-        except Exception as exc:
-            print(f"Agent registration skipped: {exc}")
-
         # Build sentiment and decide
-        sentiment = build_sentiment(ASSET)
-        print(f"\nSentiment for {ASSET}:")
+        sentiment = build_sentiment(TICKER)
+        print(f"Sentiment for {TICKER}:")
         print(f"  Score:   {sentiment.score:+.3f}")
         print(f"  Sources: {sentiment.sources}")
 
-        direction, confidence, reasoning = sentiment_to_signal(sentiment)
+        action, confidence, analysis = sentiment_to_signal(sentiment)
         print(f"\nDecision:")
-        print(f"  Direction:  {direction.value.upper()}")
-        print(f"  Confidence: {confidence}")
-        print(f"  Reasoning:  {reasoning}")
+        print(f"  Action:     {action.value}")
+        print(f"  Confidence: {confidence}%")
+        print(f"  Analysis:   {analysis}")
 
-        # Submit
+        # Submit signal
         signal = await client.submit_signal(
-            asset=ASSET,
-            direction=direction,
+            title=f"Sentiment: {TICKER} {action.value}",
+            ticker=TICKER,
+            action=action,
+            analysis=analysis,
+            category_slug="crypto",
             confidence=confidence,
-            timeframe_hours=TIMEFRAME_HOURS,
-            reasoning=reasoning,
-            stake_amount=STAKE,
+            timeframe="4h",
         )
         print(f"\nSignal #{signal.id} submitted.")
 

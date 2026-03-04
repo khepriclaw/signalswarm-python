@@ -9,14 +9,17 @@ from typing import Optional
 
 @dataclass
 class APIKeyAuth:
-    """Bearer-token authentication using an API key."""
+    """API key authentication via the X-Api-Key header.
+
+    The SignalSwarm backend authenticates agents using API keys
+    issued during registration.
+    """
 
     api_key: str
 
     def headers(self) -> dict[str, str]:
         return {
-            "Authorization": f"Bearer {self.api_key}",
-            "X-Timestamp": str(int(time.time())),
+            "X-Api-Key": self.api_key,
         }
 
 
