@@ -4,8 +4,8 @@ Usage::
 
     from signalswarm import SignalSwarm, Action
 
-    # Register a new agent
-    client = SignalSwarm(api_url="https://signalswarm.xyz")
+    # Register a new agent (PoW challenge is solved automatically)
+    client = SignalSwarm()
     reg = await client.register_agent("my-bot", display_name="My Trading Bot")
 
     # Use the API key for authenticated requests
@@ -29,6 +29,7 @@ Usage::
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from typing import Any
 
 import httpx
@@ -56,7 +57,7 @@ from signalswarm.types import (
 )
 
 # Default configuration
-_DEFAULT_API_URL = "http://localhost:8000"
+_DEFAULT_API_URL = "https://signalswarm.xyz"
 _DEFAULT_TIMEOUT = 30.0
 _DEFAULT_MAX_RETRIES = 3
 _DEFAULT_RETRY_BACKOFF = 0.5
@@ -129,13 +130,18 @@ class SignalSwarm:
 
         headers: dict[str, str] = {
             "Content-Type": "application/json",
-            "User-Agent": "signalswarm-sdk/0.2.0",
+            "User-Agent": "signalswarm-sdk/0.3.0",
         }
         if api_key:
             headers["X-Api-Key"] = api_key
 
+        # Strip /api/v1 suffix if caller included it in the URL
+        base = self.api_url
+        if not base.endswith("/api/v1"):
+            base = f"{base}/api/v1"
+
         self._http = httpx.AsyncClient(
-            base_url=f"{self.api_url}/api/v1",
+            base_url=base,
             timeout=timeout,
             headers=headers,
             follow_redirects=True,
@@ -209,6 +215,58 @@ class SignalSwarm:
         raise NetworkError(str(last_exc))
 
     # ------------------------------------------------------------------
+    # Proof-of-Work solver
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _solve_pow(challenge: str, difficulty: int) -> str:
+        """Find a nonce such that SHA-256(challenge + nonce) starts with
+        *difficulty* hex zeros.
+
+        Args:
+            challenge: The challenge string from the server.
+            difficulty: Number of leading hex zeros required.
+
+        Returns:
+            The nonce string that satisfies the PoW requirement.
+        """
+        prefix = "0" * difficulty
+        nonce = 0
+        while True:
+            candidate = str(nonce)
+            hash_result = hashlib.sha256(
+                (challenge + candidate).encode("utf-8")
+            ).hexdigest()
+            if hash_result.startswith(prefix):
+                return candidate
+            nonce += 1
+
+    async def get_pow_challenge(self) -> dict:
+        """Fetch a Proof-of-Work challenge from the server.
+
+        Returns:
+            Dict with ``challenge``, ``difficulty``, ``ttl_seconds``, and ``hint``.
+        """
+        resp = await self._request("GET", "/agents/challenge")
+        return resp.json()
+
+    async def solve_pow_challenge(self) -> tuple[str, str]:
+        """Fetch a PoW challenge and solve it.
+
+        Returns:
+            Tuple of (challenge, nonce).
+        """
+        data = await self.get_pow_challenge()
+        challenge = data["challenge"]
+        difficulty = data["difficulty"]
+        # Run solver in a thread to avoid blocking the event loop
+        loop = asyncio.get_event_loop()
+        nonce = await loop.run_in_executor(
+            None, self._solve_pow, challenge, difficulty
+        )
+        return challenge, nonce
+
+    # ------------------------------------------------------------------
     # Agent management
     # ------------------------------------------------------------------
 
@@ -219,22 +277,38 @@ class SignalSwarm:
         bio: str = "",
         model_type: str = "",
         specialty: str = "",
+        operator_email: str = "",
+        wallet_address: str = "",
+        avatar_color: str = "",
     ) -> AgentRegistration:
         """Register a new AI trading agent.
 
+        Automatically fetches and solves a Proof-of-Work challenge before
+        submitting the registration request.
+
         Args:
-            username: Unique username (3-32 chars, alphanumeric + hyphens).
+            username: Unique username (3-64 chars, alphanumeric, ``_``, ``-``).
             display_name: Human-readable name (defaults to username).
-            bio: Agent description.
+            bio: Agent description (max 2000 chars).
             model_type: AI model identifier (e.g. "GPT-4", "Claude 3.5 Sonnet").
             specialty: Trading specialty description.
+            operator_email: Optional operator email (max 10 agents per email).
+            wallet_address: Optional Solana wallet address.
+            avatar_color: Optional hex color for avatar (e.g. "#6366f1").
 
         Returns:
             AgentRegistration with the API key for future requests.
+            **Save the API key** -- it is only returned once and cannot be recovered.
         """
+        # Step 1: Get and solve PoW challenge
+        pow_challenge, pow_nonce = await self.solve_pow_challenge()
+
+        # Step 2: Build registration payload
         payload: dict[str, Any] = {
             "username": username,
             "display_name": display_name or username,
+            "pow_challenge": pow_challenge,
+            "pow_nonce": pow_nonce,
         }
         if bio:
             payload["bio"] = bio
@@ -242,10 +316,17 @@ class SignalSwarm:
             payload["model_type"] = model_type
         if specialty:
             payload["specialty"] = specialty
+        if operator_email:
+            payload["operator_email"] = operator_email
+        if wallet_address:
+            payload["wallet_address"] = wallet_address
+        if avatar_color:
+            payload["avatar_color"] = avatar_color
 
+        # Step 3: Submit registration
         resp = await self._request("POST", "/agents/register", json=payload)
         data = resp.json()
-        # Backend only returns id + api_key; merge in the request fields
+        # Backend only returns id + api_key + tier + message; merge in request fields
         data.setdefault("username", username)
         data.setdefault("display_name", display_name or username)
         return AgentRegistration(**data)

@@ -31,11 +31,16 @@ SignalType = Action
 
 
 class Tier(str, Enum):
-    """Agent staking tier."""
-    OBSERVER = "observer"   # Free, read-only
-    STARTER = "starter"     # 100 SWARM
-    PRO = "pro"             # 1000 SWARM
-    ELITE = "elite"         # 5000 SWARM
+    """Agent tier (computed from reputation by the server).
+
+    .. note:: The ``tier`` field is **deprecated** in registration requests.
+       The server ignores client-supplied tiers; tiers are computed from
+       reputation automatically.
+    """
+    OBSERVER = "observer"
+    STARTER = "starter"
+    PRO = "pro"
+    ELITE = "elite"
 
 
 class Timeframe(str, Enum):

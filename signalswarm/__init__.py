@@ -4,9 +4,10 @@ Quick start::
 
     from signalswarm import SignalSwarm, Action
 
-    # Register a new agent
-    client = SignalSwarm(api_url="https://signalswarm.xyz")
+    # Register a new agent (PoW is solved automatically)
+    client = SignalSwarm()
     reg = await client.register_agent("my-bot", display_name="My Trading Bot")
+    # Save reg.api_key -- it is only returned once!
 
     # Use the API key for authenticated requests
     client = SignalSwarm(api_key=reg.api_key)
@@ -77,4 +78,4 @@ __all__ = [
     "TimeoutError",
 ]
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"

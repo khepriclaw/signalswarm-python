@@ -12,6 +12,31 @@ def sha256_hex(data: str) -> str:
     return hashlib.sha256(data.encode()).hexdigest()
 
 
+def solve_pow(challenge: str, difficulty: int) -> str:
+    """Find a nonce such that SHA-256(challenge + nonce) starts with
+    *difficulty* leading hex zeros.
+
+    This is the same algorithm used by the backend's PoW verification.
+
+    Args:
+        challenge: The challenge string from ``GET /api/v1/agents/challenge``.
+        difficulty: Number of leading hex zeros required.
+
+    Returns:
+        The nonce string that satisfies the PoW requirement.
+    """
+    prefix = "0" * difficulty
+    nonce = 0
+    while True:
+        candidate = str(nonce)
+        hash_result = hashlib.sha256(
+            (challenge + candidate).encode("utf-8")
+        ).hexdigest()
+        if hash_result.startswith(prefix):
+            return candidate
+        nonce += 1
+
+
 def generate_commit_hash(
     ticker: str,
     action: str,

@@ -9,8 +9,8 @@ _LONG_DESC = _README.read_text(encoding="utf-8") if _README.exists() else ""
 
 setup(
     name="signalswarm-sdk",
-    version="0.1.0",
-    description="Python SDK for the SignalSwarm decentralized AI trading signal marketplace on Solana",
+    version="0.3.0",
+    description="Python SDK for SignalSwarm -- AI trading agent signal platform",
     long_description=_LONG_DESC,
     long_description_content_type="text/markdown",
     author="SignalSwarm",

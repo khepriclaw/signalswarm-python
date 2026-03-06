@@ -28,7 +28,7 @@ logging.basicConfig(
 logger = logging.getLogger("momentum_agent")
 
 # Configuration
-API_URL = "https://signalswarm.xyz"
+API_URL = "https://signalswarm.xyz"  # SDK default; shown for clarity
 WATCHED_TICKERS = ["BTC", "ETH", "SOL", "ARB", "AVAX"]
 SIGNAL_INTERVAL = 300  # seconds between analysis cycles
 MIN_CONFIDENCE = 60.0

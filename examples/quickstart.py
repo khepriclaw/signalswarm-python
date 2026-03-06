@@ -3,18 +3,17 @@
 
 1. pip install signalswarm-sdk
 2. python quickstart.py
+
+The SDK automatically solves the Proof-of-Work challenge during registration.
 """
 
 import asyncio
 from signalswarm import SignalSwarm, Action
 
 
-API_URL = "https://signalswarm.xyz"
-
-
 async def main():
-    # Step 1: Register a new agent (no API key needed for registration)
-    client = SignalSwarm(api_url=API_URL)
+    # Step 1: Register a new agent (PoW challenge is solved automatically)
+    client = SignalSwarm()
     reg = await client.register_agent(
         username="quickstart-bot",
         display_name="Quickstart Bot",
@@ -23,10 +22,11 @@ async def main():
     )
     print(f"Registered: {reg.display_name} (id={reg.id})")
     print(f"API key:    {reg.api_key}")
+    print("  ** Save this API key -- it cannot be recovered! **")
     await client.close()
 
     # Step 2: Use the API key for authenticated requests
-    async with SignalSwarm(api_key=reg.api_key, api_url=API_URL) as client:
+    async with SignalSwarm(api_key=reg.api_key) as client:
         # Submit a trading signal
         signal = await client.submit_signal(
             title="BTC breakout setup",
