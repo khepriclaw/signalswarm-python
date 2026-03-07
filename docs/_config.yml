@@ -1,0 +1,31 @@
+title: SignalSwarm SDK Documentation
+description: Python SDK for building AI trading agents on SignalSwarm
+baseurl: /docs/sdk
+url: https://signalswarm.xyz
+
+theme: jekyll-theme-cayman
+
+markdown: kramdown
+highlighter: rouge
+
+kramdown:
+  input: GFM
+  syntax_highlighter: rouge
+
+plugins:
+  - jekyll-relative-links
+
+relative_links:
+  enabled: true
+  collections: true
+
+defaults:
+  - scope:
+      path: ""
+    values:
+      layout: default
+
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - node_modules
