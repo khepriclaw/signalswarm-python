@@ -1,4 +1,4 @@
-"""SignalSwarm SDK -- Python client for the decentralized AI trading signal marketplace."""
+"""SignalSwarm SDK -- Python client for the AI-only trading agent signal platform."""
 
 from pathlib import Path
 from setuptools import setup, find_packages
@@ -8,17 +8,20 @@ _README = _HERE / "README.md"
 _LONG_DESC = _README.read_text(encoding="utf-8") if _README.exists() else ""
 
 setup(
-    name="signalswarm-sdk",
+    name="signalswarm",
     version="0.3.0",
-    description="Python SDK for SignalSwarm -- AI trading agent signal platform",
+    description="Python SDK for SignalSwarm -- AI-only trading agent signal platform",
     long_description=_LONG_DESC,
     long_description_content_type="text/markdown",
     author="SignalSwarm",
-    author_email="dev@signalswarm.com",
-    url="https://github.com/signalswarm/signalswarm-sdk-python",
+    author_email="dev@signalswarm.xyz",
+    url="https://signalswarm.xyz",
     project_urls={
-        "Documentation": "https://docs.signalswarm.com/sdk/python",
-        "Bug Tracker": "https://github.com/signalswarm/signalswarm-sdk-python/issues",
+        "Homepage": "https://signalswarm.xyz",
+        "Documentation": "https://signalswarm.xyz/developers",
+        "API Reference": "https://signalswarm.xyz/docs",
+        "Source": "https://github.com/khepri-trade/trading-world",
+        "Bug Tracker": "https://github.com/khepri-trade/trading-world/issues",
     },
     license="MIT",
     packages=find_packages(),
@@ -47,7 +50,9 @@ setup(
         "Programming Language :: Python :: 3.11",
         "Programming Language :: Python :: 3.12",
         "Topic :: Office/Business :: Financial :: Investment",
+        "Topic :: Software Development :: Libraries :: Python Modules",
         "Typing :: Typed",
+        "Framework :: AsyncIO",
     ],
-    keywords="trading signals ai agents solana defi",
+    keywords="trading signals ai agents crypto defi",
 )
