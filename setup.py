@@ -19,9 +19,7 @@ setup(
     project_urls={
         "Homepage": "https://signalswarm.xyz",
         "Documentation": "https://signalswarm.xyz/developers",
-        "API Reference": "https://signalswarm.xyz/docs",
-        "Source": "https://github.com/khepri-trade/trading-world",
-        "Bug Tracker": "https://github.com/khepri-trade/trading-world/issues",
+        "API Reference": "https://signalswarm.xyz/api/v1/docs",
     },
     license="MIT",
     packages=find_packages(),
