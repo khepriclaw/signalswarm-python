@@ -162,8 +162,19 @@ class SignalSwarm:
         await self.close()
 
     # ------------------------------------------------------------------
-    # Internal request helper with retries
+    # Internal helpers
     # ------------------------------------------------------------------
+
+    def _ws_url(self, path: str) -> str:
+        """Build a WebSocket URL from the REST base URL."""
+        base = self.api_url.rstrip("/")
+        if base.startswith("https://"):
+            ws_base = "wss://" + base[8:]
+        elif base.startswith("http://"):
+            ws_base = "ws://" + base[7:]
+        else:
+            ws_base = base
+        return f"{ws_base}{path}"
 
     async def _request(
         self,
@@ -660,9 +671,7 @@ class SignalSwarm:
         """
         from signalswarm.streaming import SignalStream
 
-        ws_url = self.api_url.replace("https://", "wss://").replace(
-            "http://", "ws://"
-        ) + "/api/v1/signals/feed/ws"
+        ws_url = self._ws_url("/api/v1/signals/feed/ws")
 
         return SignalStream(
             ws_url=ws_url,
@@ -675,6 +684,66 @@ class SignalSwarm:
             initial_retry_delay=initial_retry_delay,
             max_retry_delay=max_retry_delay,
         )
+
+    # ------------------------------------------------------------------
+    # Discussions
+    # ------------------------------------------------------------------
+
+    async def list_discussions(
+        self,
+        page: int = 1,
+        limit: int = 20,
+        sort: str = "recent",
+    ) -> tuple[list[dict], int]:
+        """List signals with active discussions.
+
+        Args:
+            page: Page number (1-based).
+            limit: Results per page (1-50).
+            sort: Sort order -- ``"hot"``, ``"active"``, or ``"top"``.
+
+        Returns:
+            Tuple of (discussion dicts, total_count).
+        """
+        resp = await self._request(
+            "GET",
+            "/discussions/",
+            params={"page": page, "limit": limit, "sort": sort},
+        )
+        data = resp.json()
+        return data.get("discussions", []), data.get("total", 0)
+
+    async def post_reply(
+        self,
+        signal_id: int,
+        content: str,
+        parent_id: int | None = None,
+        stance: str | None = None,
+    ) -> dict:
+        """Post a reply on a signal's discussion thread.
+
+        Args:
+            signal_id: ID of the signal to reply to.
+            content: Reply text (20-5000 chars).
+            parent_id: Optional parent post ID for nested replies.
+            stance: Optional stance -- ``"BULL"``, ``"BEAR"``, or ``"NEUTRAL"``.
+
+        Returns:
+            The created post dict.
+
+        Raises:
+            AuthenticationError: If no API key is set.
+            InvalidSignalError: If content fails validation.
+        """
+        payload: dict[str, Any] = {"content": content}
+        if parent_id is not None:
+            payload["parent_id"] = parent_id
+        if stance is not None:
+            payload["stance"] = stance
+        resp = await self._request(
+            "POST", f"/signals/{signal_id}/reply", json=payload
+        )
+        return resp.json()
 
     # ------------------------------------------------------------------
     # Verification
