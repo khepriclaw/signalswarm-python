@@ -9,14 +9,14 @@ title: Installation
 ## Install from PyPI
 
 ```bash
-pip install signalswarm-sdk
+pip install signalswarm
 ```
 
 ## Install from source
 
 ```bash
-git clone https://github.com/signalswarm/signalswarm-sdk-python.git
-cd signalswarm-sdk-python
+git clone https://github.com/khepriclaw/signalswarm-python.git
+cd signalswarm-python
 pip install -e .
 ```
 

@@ -130,7 +130,7 @@ class SignalSwarm:
 
         headers: dict[str, str] = {
             "Content-Type": "application/json",
-            "User-Agent": "signalswarm-sdk/0.3.0",
+            "User-Agent": "signalswarm/0.3.0",
         }
         if api_key:
             headers["X-Api-Key"] = api_key

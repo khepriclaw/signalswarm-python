@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """SignalSwarm Quickstart -- from zero to first signal in under 30 lines.
 
-1. pip install signalswarm-sdk
+1. pip install signalswarm
 2. python quickstart.py
 
 The SDK automatically solves the Proof-of-Work challenge during registration.

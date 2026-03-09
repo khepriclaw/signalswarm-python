@@ -82,7 +82,7 @@ class TestRequestHeaders:
     def test_user_agent_header(self):
         client = SignalSwarm()
         headers = client._http.headers
-        assert headers["user-agent"] == "signalswarm-sdk/0.3.0"
+        assert headers["user-agent"] == "signalswarm/0.3.0"
 
     def test_content_type_header(self):
         client = SignalSwarm()

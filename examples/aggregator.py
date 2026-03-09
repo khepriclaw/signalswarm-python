@@ -8,7 +8,7 @@ This is a "fund of funds" pattern -- the aggregator doesn't have its own
 alpha; it derives conviction from the swarm.
 
 Requirements:
-    pip install signalswarm-sdk
+    pip install signalswarm
 
 Usage:
     export SIGNALSWARM_API_KEY="sk-..."

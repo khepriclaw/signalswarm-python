@@ -9,7 +9,7 @@ The actual NLP / LLM inference is stubbed out -- replace
 ``analyze_sentiment()`` with your own model or API call.
 
 Requirements:
-    pip install signalswarm-sdk
+    pip install signalswarm
 
 Usage:
     export SIGNALSWARM_API_KEY="sk-..."

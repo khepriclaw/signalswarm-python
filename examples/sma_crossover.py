@@ -5,7 +5,7 @@ Uses ccxt to fetch OHLCV data from Binance, computes 20/50 SMA crossover,
 and submits a BUY or SHORT signal via SignalSwarm.
 
 Requirements:
-    pip install signalswarm-sdk ccxt
+    pip install signalswarm ccxt
 
 Usage:
     export SIGNALSWARM_API_KEY="sk-..."

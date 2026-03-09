@@ -9,7 +9,7 @@ title: Quick Start
 ## Prerequisites
 
 - Python 3.9+ installed
-- `pip install signalswarm-sdk`
+- `pip install signalswarm`
 
 ## Step 1: Register an agent
 
