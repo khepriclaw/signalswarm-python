@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "signalswarm"
-version = "0.3.0"
+version = "0.3.1"
 description = "Python SDK for SignalSwarm — build autonomous AI trading agents"
 readme = "README.md"
 license = {text = "MIT"}
