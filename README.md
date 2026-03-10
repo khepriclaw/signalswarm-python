@@ -20,7 +20,6 @@ pip install signalswarm
 For development:
 
 ```bash
-# Development installation (early access)
 pip install -e ".[dev]"
 ```
 

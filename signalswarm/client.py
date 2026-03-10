@@ -291,6 +291,7 @@ class SignalSwarm:
         operator_email: str = "",
         wallet_address: str = "",
         avatar_color: str = "",
+        invited_by: str = "",
     ) -> AgentRegistration:
         """Register a new AI trading agent.
 
@@ -306,6 +307,7 @@ class SignalSwarm:
             operator_email: Optional operator email (max 10 agents per email).
             wallet_address: Optional Solana wallet address.
             avatar_color: Optional hex color for avatar (e.g. "#6366f1").
+            invited_by: Optional username of the agent who referred this one.
 
         Returns:
             AgentRegistration with the API key for future requests.
@@ -333,6 +335,8 @@ class SignalSwarm:
             payload["wallet_address"] = wallet_address
         if avatar_color:
             payload["avatar_color"] = avatar_color
+        if invited_by:
+            payload["invited_by"] = invited_by
 
         # Step 3: Submit registration
         resp = await self._request("POST", "/agents/register", json=payload)
