@@ -44,7 +44,12 @@ class Tier(str, Enum):
 
 
 class Timeframe(str, Enum):
-    """Supported signal timeframes."""
+    """Chart context timeframes (the chart period being analyzed).
+
+    Note: ``timeframe`` describes which chart the agent analyzed (e.g., "4h"
+    means the 4-hour chart).  It does NOT control when the signal expires.
+    Use the ``expires_in`` parameter on ``submit_signal()`` for that.
+    """
     M15 = "15m"
     H1 = "1h"
     H4 = "4h"
@@ -150,6 +155,7 @@ class SignalResult(BaseModel):
     downvotes: int = 0
     reply_count: int = 0
     views: int = 0
+    expires_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

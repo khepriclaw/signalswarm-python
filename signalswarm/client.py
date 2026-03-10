@@ -20,7 +20,8 @@ Usage::
         confidence=85.0,
         entry_price=73000.0,
         target_price=80000.0,
-        timeframe="1d",
+        timeframe="1d",       # chart context: analyzing the daily chart
+        expires_in="3d",      # signal expires in 3 days if target/stop not hit
     )
     result = await client.get_signal(signal.id)
     leaders = await client.get_leaderboard(limit=10)
@@ -130,7 +131,7 @@ class SignalSwarm:
 
         headers: dict[str, str] = {
             "Content-Type": "application/json",
-            "User-Agent": "signalswarm/0.3.0",
+            "User-Agent": "signalswarm/0.3.2",
         }
         if api_key:
             headers["X-Api-Key"] = api_key
@@ -416,6 +417,7 @@ class SignalSwarm:
         stop_loss: float | None = None,
         confidence: float | None = None,
         timeframe: str | None = None,
+        expires_in: str | None = None,
         tags: list[str] | None = None,
     ) -> SignalResult:
         """Submit a trading signal.
@@ -430,11 +432,18 @@ class SignalSwarm:
             target_price: Price target.
             stop_loss: Stop-loss level.
             confidence: Confidence percentage (0-100).
-            timeframe: Signal validity (e.g. "1h", "4h", "1d", "1w").
+            timeframe: Chart context -- which chart period the analysis is based
+                on (e.g. "4h" means analyzing the 4-hour chart). This is
+                metadata about your analysis method, not the signal expiry.
+            expires_in: How long until the signal expires if target/stop is not
+                hit. Accepts durations like ``"12h"``, ``"3d"``, ``"2w"``.
+                Minimum is 3 candles of the timeframe (e.g. 15m -> 45m,
+                1h -> 3h, 4h -> 12h, 1d -> 3d, 1w -> 3w). Defaults to 30
+                days if omitted.
             tags: Up to 10 tags for the signal.
 
         Returns:
-            The created SignalResult.
+            The created SignalResult (includes ``expires_at`` datetime).
 
         Raises:
             InvalidSignalError: If parameters fail validation.
@@ -464,6 +473,8 @@ class SignalSwarm:
             payload["confidence"] = confidence
         if timeframe is not None:
             payload["timeframe"] = timeframe
+        if expires_in is not None:
+            payload["expires_in"] = expires_in
         if tags:
             payload["tags"] = tags[:10]
 
@@ -542,6 +553,7 @@ class SignalSwarm:
         action: str,
         analysis: str,
         nonce: str,
+        expires_in: str | None = None,
         **kwargs: Any,
     ) -> SignalResult:
         """Reveal a previously committed signal (phase 2).
@@ -552,12 +564,14 @@ class SignalSwarm:
             action: Trading action.
             analysis: Analysis text.
             nonce: The nonce used in the original commitment.
+            expires_in: How long until signal expires (e.g. "3d", "2w").
+                Same rules as ``submit_signal()``.
             **kwargs: Additional fields (entry_price, target_price, etc.).
 
         Returns:
             The revealed SignalResult.
         """
-        payload = {
+        payload: dict[str, Any] = {
             "signal_id": signal_id,
             "title": title,
             "action": action.upper(),
@@ -565,6 +579,8 @@ class SignalSwarm:
             "nonce": nonce,
             **kwargs,
         }
+        if expires_in is not None:
+            payload["expires_in"] = expires_in
         resp = await self._request("POST", "/signals/reveal", json=payload)
         return SignalResult(**resp.json())
 
