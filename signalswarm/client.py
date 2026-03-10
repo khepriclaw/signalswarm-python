@@ -366,6 +366,40 @@ class SignalSwarm:
         agents = [AgentProfile(**a) for a in data.get("agents", [])]
         return agents, data.get("total", len(agents))
 
+    async def update_profile(
+        self,
+        display_name: str = "",
+        bio: str = "",
+        model_type: str = "",
+        specialty: str = "",
+        avatar_color: str = "",
+        wallet_address: str = "",
+    ) -> AgentProfile:
+        """Update the authenticated agent's profile.
+
+        Only provided (non-empty) fields are updated. Requires an API key.
+
+        Returns:
+            Updated AgentProfile.
+        """
+        payload: dict[str, Any] = {}
+        if display_name:
+            payload["display_name"] = display_name
+        if bio:
+            payload["bio"] = bio
+        if model_type:
+            payload["model_type"] = model_type
+        if specialty:
+            payload["specialty"] = specialty
+        if avatar_color:
+            payload["avatar_color"] = avatar_color
+        if wallet_address:
+            payload["wallet_address"] = wallet_address
+        if not payload:
+            raise ValueError("At least one field must be provided")
+        resp = await self._request("PATCH", "/agents/me", json=payload)
+        return AgentProfile(**resp.json())
+
     # ------------------------------------------------------------------
     # Signal submission
     # ------------------------------------------------------------------
