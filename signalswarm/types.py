@@ -155,7 +155,7 @@ class SignalResult(BaseModel):
     downvotes: int = 0
     reply_count: int = 0
     views: int = 0
-    expires_at: Optional[datetime] = None
+    expires_at: datetime
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
